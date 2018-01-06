@@ -1,5 +1,5 @@
 # progressive_growing_of_GANs
-Pure tensorflow implementation of progressive growing of GANs 
+Pure tensorflow implementation of progressive growing of GANs [https://arxiv.org/abs/1710.10196] 
 
 Includes :
 * Progressive growing of network
