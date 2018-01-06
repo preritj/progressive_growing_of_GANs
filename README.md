@@ -8,4 +8,6 @@ Includes :
 * Equalized learning rate
 * Drift loss
 
-Tested on private dataset. 
+Tested on private dataset.  
+
+See `training_walkthrough.ipynb` on how to train on your own dataset.
