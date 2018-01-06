@@ -39,7 +39,14 @@ class Model(object):
         if input_size == res:
             return image
         new_size = [res, res]
-        return tf.image.resize_nearest_neighbor(image, size=new_size)
+        new_img = tf.image.resize_nearest_neighbor(image, size=new_size)
+        if self.cfg.transition:
+            alpha = self.tf_placeholders['alpha']
+            low_res_img = tf.layers.average_pooling2d(new_img, 2, 2)
+            low_res_img = \
+                tf.image.resize_nearest_neighbor(low_res_img, size=new_size)
+            new_img = alpha * new_img + (1. - alpha) * low_res_img
+        return new_img
 
     def build_generator(self, training):
         raise NotImplementedError("Not yet implemented")
@@ -139,7 +146,7 @@ class Model(object):
             load_model = self.cfg.load_model
             if self.cfg.load_model:
                 self.load(sess, saver, load_model)
-            if transition and not self.cfg.load_model:
+            elif transition:
                 vars_to_load = []
                 all_vars = tf.trainable_variables()
                 r = self.cfg.min_resolution
@@ -156,7 +163,7 @@ class Model(object):
             sum_g_loss, sum_d_loss = 0., 0.
             batch_gen = image_loader.batch_generator()
             for batch_images, batch_labels in batch_gen:
-                batch_z = np.random.uniform(-1, 1, size=(batch_size, z_dim))
+                batch_z = np.random.normal(-1, 1, size=(batch_size, z_dim))
                 feed_dict = {self.tf_placeholders['images']: batch_images,
                              self.tf_placeholders['labels']: batch_labels,
                              self.tf_placeholders['z']: batch_z,
@@ -188,7 +195,7 @@ class Model(object):
                     print("Saving model in {}".format(save_dir))
                     saver.save(sess, save_dir, global_step)
                     if self.cfg.save_images:
-                        gen_images = self.generate_images(save_tag)
+                        gen_images = self.generate_images(save_tag, alpha=alpha)
                         plt.figure(figsize=(10, 10))
                         grid = image_loader.grid_batch_images(gen_images)
                         filename = os.path.join(img_save_dir, str(global_step) + '.png')
@@ -196,15 +203,16 @@ class Model(object):
             print("Saving model in {}".format(save_dir))
             saver.save(sess, save_dir, global_step)
 
-    def generate_images(self, model, batch_z=None):
+    def generate_images(self, model, batch_z=None, alpha=0.):
         """Runs generator to generate images"""
-        batch_size = 64
+        batch_size = 64  # self.cfg.batch_size
         z_dim = self.cfg.z_dim
         if batch_z is None:
-            batch_z = np.random.uniform(-1, 1, size=(batch_size, z_dim))
-        saver = tf.train.Saver(self.ema_vars)
+            batch_z = np.random.normal(-1, 1, size=(batch_size, z_dim))
+        # saver = tf.train.Saver(self.ema_vars)
+        saver = tf.train.Saver()
         feed_dict = {self.tf_placeholders['z']: batch_z,
-                     self.tf_placeholders['alpha']: 0.}
+                     self.tf_placeholders['alpha']: alpha}
         image_loader = self.image_loader
         gen = self.build_generator(training=False)
 
