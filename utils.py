@@ -1,25 +1,25 @@
 from __future__ import print_function
 from __future__ import division
 
+import tensorflow as tf
 import os
 from glob import glob
 import numpy as np
 import math
 import cv2
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 class ImageLoader(object):
     def __init__(self, cfg):
         self.cfg = cfg
-        imgs, labels = [], []
-        for cat in self.cfg.classes.keys():
-            cat_dir = os.path.join(cfg.data_dir, cat)
-            files = glob(cat_dir + '/*.tif')
-            imgs += files
-            labels += [cfg.classes[cat]] * len(files)
+        imgs = glob(cfg.data_dir + "/*.jpg") + \
+               glob(cfg.data_dir + "/*.png") + \
+               glob(cfg.data_dir + "/*.jpeg") + \
+               glob(cfg.data_dir + "/*.bmp")
+
         self.images = np.array(imgs)
-        self.labels = np.array(labels)
         self.train_idx, self.val_idx = None, None
         self.train_test_split()
         if self.cfg.preprocess == 'min-max':
@@ -30,13 +30,8 @@ class ImageLoader(object):
 
     def train_test_split(self):
         # build validation set
-        val_idx = []
-        for cat, file_ids in self.cfg.validation_set.items():
-            for f in file_ids:
-                filename = self.cfg.class_abr[cat] + str(f).zfill(3) + '.tif'
-                filename = os.path.join(self.cfg.data_dir, cat, filename)
-                val_idx.append(list(self.images).index(filename))
-                # build train set
+
+        val_idx = range(0, len(self.images), 10)
         train_idx = [i for i, _ in enumerate(self.images) if i not in val_idx]
         self.train_idx = np.array(train_idx)
         self.val_idx = np.array(val_idx)
@@ -70,8 +65,9 @@ class ImageLoader(object):
         """
         img_h, img_w, _ = img.shape
         new_h, new_w, _ = self.cfg.input_shape
-        top = np.random.randint(0, img_h - new_h)
-        left = np.random.randint(0, img_w - new_w)
+        img = np.pad(img, [(0, max(0, new_h - img_h)), (0, max(0, new_w - img_w)), (0,0)], mode='mean')
+        top = np.random.randint(0, max(0, img_h - new_h)+1)
+        left = np.random.randint(0, max(0, img_w - new_w)+1)
         new_img = img[top:top + new_h, left:left + new_w, :]
         return new_img
 
@@ -108,23 +104,66 @@ class ImageLoader(object):
         Returns:
             (images, labels): images and labels corresponding to indices
         """
-        batch_imgs, batch_labels = [], []
+        batch_imgs = []
         for index in idx:
             img_file = self.images[index]
-            img = plt.imread(img_file)
-            label = self.labels[index]
+            img = plt.imread(img_file)[:,:,:3]  # For png, which have 4 channels
             img = self.preprocess_image(img)
             batch_imgs.append(img)
-            batch_labels.append(label)
-        return np.array(batch_imgs), np.array(batch_labels)
+        return np.array(batch_imgs)
 
     def batch_generator(self):
         batch_size = self.cfg.batch_size
         for _ in range(self.cfg.n_iters):
             indices = np.random.randint(len(self.train_idx), size=batch_size)
             batch_idx = self.train_idx[indices]
-            batch_imgs, batch_labels = self.load_batch(batch_idx)
-            yield batch_imgs, batch_labels
+            batch_imgs = self.load_batch(batch_idx)
+            yield batch_imgs
+
+    def create_batch_pipeline(self):
+        images_names_tensor = tf.convert_to_tensor(self.images, dtype=tf.string)
+        single_image_name, = tf.train.slice_input_producer([images_names_tensor], shuffle=True, capacity=128)
+        single_image_content = tf.read_file(single_image_name)
+        single_image = tf.image.decode_image(single_image_content, channels=3)
+        single_image.set_shape([None, None, 3])
+
+        # Smart resize
+        shp = tf.shape(single_image)
+        r_size = shp[:2]
+        dest_h = tf.random_uniform([1], 512, 1024, tf.int32)
+        dest_h = tf.minimum(dest_h, r_size[0])
+        ratio = tf.to_float(dest_h) / tf.to_float(r_size[0])
+        n_size = tf.to_int32(tf.to_float(r_size) * ratio)
+        single_image = tf.cast(tf.image.resize_images(single_image, n_size), np.uint8)
+
+        # single_image = tf.image.random_brightness(single_image, .3)
+        # single_image = tf.image.random_contrast(single_image, 0.9, 1.1)
+
+        nH, nW = self.cfg.input_shape[:2]
+        rH = tf.shape(single_image)[0]
+        rW = tf.shape(single_image)[1]
+        dH = tf.maximum(nH, rH) - rH
+        dW = tf.maximum(nW, rW) - rW
+
+        n = int(single_image.shape[-1])
+        single_image = tf.pad(single_image,
+                tf.convert_to_tensor([[dH // 2, (dH + 1) // 2], [dW // 2, (dW + 1) // 2], [0, 0]]))
+        single_image = tf.random_crop(single_image, [nH, nW, n], seed=123)
+        single_image.set_shape([nH, nW, n])
+
+        angs = tf.to_float(tf.random_uniform([1], 0, 4, tf.int32)) * np.pi / 2
+        single_image = tf.contrib.image.rotate(single_image, angs[0])
+        single_image = tf.image.random_flip_left_right(single_image)
+
+        single_image = (tf.to_float(single_image) - self.img_mean) / self.img_stddev
+
+        image_batch = tf.train.batch(
+            [single_image],
+            batch_size=self.cfg.batch_size,
+            num_threads=16,
+            capacity=128)
+
+        return image_batch
 
     def grid_batch_images(self, images):
         n, h, w, c = images.shape

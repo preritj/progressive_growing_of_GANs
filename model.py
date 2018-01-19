@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import losses
+import time
 from utils import ImageLoader
 
 
@@ -23,13 +24,9 @@ class Model(object):
         h, w, c = self.cfg.input_shape
         z_dim = self.cfg.z_dim
         z = tf.placeholder(tf.float32, [None, z_dim])
-        images = tf.placeholder(tf.float32, [None, h, w, c])
-        labels = tf.placeholder(tf.int32, [None])
         learning_rate = tf.placeholder(tf.float32)
         alpha = tf.placeholder(tf.float32, shape=())
-        self.tf_placeholders = {'images': images,
-                                'labels': labels,
-                                'z': z,
+        self.tf_placeholders = {'z': z,
                                 'learning_rate': learning_rate,
                                 'alpha': alpha}
 
@@ -57,13 +54,18 @@ class Model(object):
     def build_discriminator(self, input_, reuse, training):
         raise NotImplementedError("Not yet implemented")
 
-    def make_train_op(self):
-        images_real = self.tf_placeholders['images']
+    def make_train_op(self, images):
+        images_real = images
+        tf.summary.image('images_real_original_size', images_real, 8)
         images_real = self.resize_image(images_real)
+        tf.summary.image('images_real', images_real, 8)
+
         d_real = self.build_discriminator(images_real, reuse=False,
                                           training=True)
 
         images_fake = self.build_generator(training=True)
+        tf.summary.image('images_fake', images_fake, 8)
+
         d_fake = self.build_discriminator(images_fake, reuse=True,
                                           training=True)
 
@@ -118,7 +120,6 @@ class Model(object):
 
     def train(self):
         """ Train the model. """
-        self.make_train_op()
         batch_size = self.cfg.batch_size
         n_iters = self.cfg.n_iters
         n_critic = self.cfg.n_critic
@@ -140,9 +141,20 @@ class Model(object):
             os.makedirs(save_dir)
         save_dir = os.path.join(save_dir, 'model')
 
+        with tf.device("/cpu:0"):
+            image_batch = image_loader.create_batch_pipeline()
+
+        self.make_train_op(image_batch)
+
+        merged = tf.summary.merge_all()
+        writer = tf.summary.FileWriter(os.path.join(self.cfg.summary_dir, time.strftime('%Y%m%d_%H%M%S')))
+
+        # Create ops in graph before Session is created
+        init = tf.global_variables_initializer()
+        saver = tf.train.Saver()
         with tf.Session() as sess:
-            sess.run(tf.global_variables_initializer())
-            saver = tf.train.Saver()
+            sess.run(init)
+            tf.train.start_queue_runners(sess)
             load_model = self.cfg.load_model
             if self.cfg.load_model:
                 self.load(sess, saver, load_model)
@@ -155,23 +167,29 @@ class Model(object):
                     vars_to_load += [v for v in all_vars if var_scope in v.name]
                     r *= 2
                 saver_restore = tf.train.Saver(vars_to_load)
-                tag = '{0:}x{0:}'.format(self.cfg.resolution / 2)
+                tag = '{0:}x{0:}'.format(self.cfg.resolution // 2)
+                print(tag)
                 self.load(sess, saver_restore, tag=tag)
 
             alpha = self.cfg.fade_alpha
             global_step = 0
             sum_g_loss, sum_d_loss = 0., 0.
-            batch_gen = image_loader.batch_generator()
-            for batch_images, batch_labels in batch_gen:
+            # batch_gen = image_loader.batch_generator()
+
+            for i in range(self.cfg.n_iters):
                 batch_z = np.random.normal(-1, 1, size=(batch_size, z_dim))
-                feed_dict = {self.tf_placeholders['images']: batch_images,
-                             self.tf_placeholders['labels']: batch_labels,
-                             self.tf_placeholders['z']: batch_z,
+                feed_dict = {self.tf_placeholders['z']: batch_z,
                              self.tf_placeholders['learning_rate']: learning_rate,
                              self.tf_placeholders['alpha']: alpha}
-                _, global_step, d_loss = \
-                    sess.run([self.d_train_op, self.global_step, self.d_loss],
+                if global_step % display_period == 0:
+                    _, global_step, d_loss, merged_res = \
+                        sess.run([self.d_train_op, self.global_step, self.d_loss, merged],
+                                 feed_dict=feed_dict)
+                else:
+                    _, global_step, d_loss = \
+                        sess.run([self.d_train_op, self.global_step, self.d_loss],
                              feed_dict=feed_dict)
+
                 g_loss = 0.
                 if global_step % n_critic == 0:
                     _, _, g_loss = \
@@ -181,8 +199,9 @@ class Model(object):
                 sum_d_loss += d_loss
                 if transition:
                     alpha_step = 1. / n_iters
-                    alpha = min(1., alpha + alpha_step)
+                    alpha = min(1., self.cfg.fade_alpha+global_step*alpha_step)
                 if global_step % display_period == 0:
+                    writer.add_summary(merged_res, global_step)
                     print("After {} iterations".format(global_step),
                           "Discriminator loss : {:3.5f}  "
                           .format(sum_d_loss / display_period),
