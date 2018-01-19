@@ -8,11 +8,12 @@ BATCH_SIZE = 64  # batch size for training
 DISPLAY_PERIOD = 5  # Interval to display loss
 SAVE_PERIOD = 1  # Interval to save model
 SAVE_IMAGES = True  # if True, save images when model is saved
-SAVE_DIR = './models'  # path to save trained models
-IMAGE_SAVE_DIR = './gan_images'  # path to save GAN images
+SAVE_DIR = r'D:\Data\pgan\models'  # path to save trained models
+IMAGE_SAVE_DIR = r'D:\Data\pgan\gan_images'  # path to save GAN images
+SUMMARY_DIR = r'D:\Data\pgan\train'
 
 # Data Preprocessing and augmentation parameters
-INPUT_SHAPE = (128, 128, 3)  # size of random crops used for training
+INPUT_SHAPE = (512, 512, 3)  # size of random crops used for training
 FLIP = True  # applies random horizontal and vertical flips
 ROTATE = True  # applies random rotations
 PREPROCESS = 'min-max'  # can be 'min-max' or 'standard'
@@ -81,11 +82,12 @@ VALIDATION_SET = {'Normal': ([i for i in range(46, 52)]
                                + [i for i in range(64, 74)])}
 
 # Data directory
-DATA_DIR = '/media/storage/ICIAR2018_BACH_Challenge/data/Photos'
+DATA_DIR = r'C:\Data\img'
 
 
 #################################################################
 cfg = edict({'data_dir': DATA_DIR,
+             'summary_dir': SUMMARY_DIR,
              'image_mean': IMAGE_MEAN,
              'image_stddev': IMAGE_STDDEV,
              'preprocess': PREPROCESS,
