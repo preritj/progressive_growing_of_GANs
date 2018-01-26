@@ -177,7 +177,7 @@ class Model(object):
             # batch_gen = image_loader.batch_generator()
 
             for i in range(self.cfg.n_iters):
-                batch_z = np.random.normal(-1, 1, size=(batch_size, z_dim))
+                batch_z = np.random.normal(0, 1, size=(batch_size, z_dim))
                 feed_dict = {self.tf_placeholders['z']: batch_z,
                              self.tf_placeholders['learning_rate']: learning_rate,
                              self.tf_placeholders['alpha']: alpha}
@@ -227,7 +227,7 @@ class Model(object):
         batch_size = 64  # self.cfg.batch_size
         z_dim = self.cfg.z_dim
         if batch_z is None:
-            batch_z = np.random.normal(-1, 1, size=(batch_size, z_dim))
+            batch_z = np.random.normal(0, 1, size=(batch_size, z_dim))
         # saver = tf.train.Saver(self.ema_vars)
         saver = tf.train.Saver()
         feed_dict = {self.tf_placeholders['z']: batch_z,
